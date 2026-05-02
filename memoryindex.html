@@ -29,7 +29,7 @@
             justify-content: center;
             align-items: center;
         }
-        .start-screen {
+        .start-screen, .pause-screen {
             pointer-events: auto;
             background: rgba(10, 10, 10, 0.9);
             padding: 3rem;
@@ -48,6 +48,9 @@
             color: #d69e2e;
             letter-spacing: 2px;
             text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            gap: 20px;
         }
         .combo-text {
             position: absolute;
@@ -61,13 +64,34 @@
             transition: all 0.1s;
             text-shadow: 0 0 20px rgba(246, 153, 63, 0.4);
         }
+        .pause-btn {
+            pointer-events: auto;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #666;
+            padding: 5px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+        .pause-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+        }
     </style>
 </head>
 <body>
 
     <canvas id="gameCanvas"></canvas>
 
+    <!-- 背景音乐 -->
+    <audio id="bgMusic" loop>
+        <source src="https://hukaizhe534-cell.github.io/burn/dianran.mp3" type="audio/mpeg">
+    </audio>
+
     <div class="ui-overlay">
+        <!-- 开始界面 -->
         <div id="startScreen" class="start-screen">
             <h1 class="text-5xl font-black mb-2 text-orange-800 tracking-tighter">余烬</h1>
             <p class="mb-8 text-gray-500 text-xs tracking-[0.5em]">ROOM OF LOST MEMORIES</p>
@@ -80,8 +104,18 @@
             </button>
         </div>
 
+        <!-- 暂停界面 -->
+        <div id="pauseScreen" class="pause-screen hidden">
+            <h2 class="text-3xl font-bold mb-6 text-orange-700">思绪停滞</h2>
+            <p class="text-gray-400 mb-8 text-sm">火光暂时熄灭，但回忆仍在门外徘徊。</p>
+            <button id="resumeBtn" class="bg-stone-900 hover:bg-orange-950 text-orange-700 border border-orange-900 px-12 py-3 rounded-sm font-bold transition-all transform hover:scale-105 pointer-events-auto">
+                继续焚化
+            </button>
+        </div>
+
         <div id="scoreBoard" class="score-board hidden">
-            归于尘土: <span id="scoreVal">0</span>
+            <button id="pauseBtn" class="pause-btn">PAUSE</button>
+            <span>归于尘土: <span id="scoreVal">0</span></span>
         </div>
         
         <div id="comboDisplay" class="combo-text">
@@ -101,11 +135,15 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const startScreen = document.getElementById('startScreen');
+        const pauseScreen = document.getElementById('pauseScreen');
         const startBtn = document.getElementById('startBtn');
+        const resumeBtn = document.getElementById('resumeBtn');
+        const pauseBtn = document.getElementById('pauseBtn');
         const scoreBoard = document.getElementById('scoreBoard');
         const scoreVal = document.getElementById('scoreVal');
         const comboDisplay = document.getElementById('comboDisplay');
         const comboVal = document.getElementById('comboVal');
+        const bgMusic = document.getElementById('bgMusic');
 
         let gameState = 'START';
         let score = 0;
@@ -114,6 +152,7 @@
         let particles = [];
         let dustParticles = []; // 环境微尘
         let lastNoteTime = 0;
+        let pauseStartTime = 0; // 记录暂停开始的时间
         let audioCtx;
         
         let lighterState = {
@@ -128,7 +167,6 @@
             initDust();
         }
 
-        // 初始化环境微尘
         function initDust() {
             dustParticles = [];
             for(let i=0; i<50; i++) {
@@ -179,7 +217,7 @@
                 this.h = 180;
                 this.active = true;
                 this.rotation = (Math.random() - 0.5) * 0.15;
-                this.hue = Math.random() * 40 + 20; // 偏黄旧相片感
+                this.hue = Math.random() * 40 + 20; 
                 this.seed = Math.random();
             }
 
@@ -195,21 +233,13 @@
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.rotation);
-                
-                // 相片阴影
                 ctx.shadowBlur = 20;
                 ctx.shadowColor = 'rgba(0,0,0,0.8)';
-                
-                // 相片纸
                 ctx.fillStyle = '#e2e2d2';
                 ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
-                
-                // 画面
                 const p = 8;
                 ctx.fillStyle = '#222';
                 ctx.fillRect(-this.w/2 + p, -this.h/2 + p, this.w - p*2, this.h - p*4);
-
-                // 简单的内容勾勒
                 ctx.clip();
                 ctx.globalAlpha = 0.4;
                 ctx.fillStyle = `hsl(${this.hue}, 30%, 50%)`;
@@ -218,34 +248,25 @@
                 } else {
                     ctx.fillRect(-50, -20, 100, 60);
                 }
-                
                 ctx.restore();
             }
         }
 
-        // 绘制房间背景
         function drawRoom() {
             const w = canvas.width;
             const h = canvas.height;
-
-            // 墙面渐变
             const wallGrad = ctx.createLinearGradient(0, 0, 0, h);
             wallGrad.addColorStop(0, '#0a0a0c');
             wallGrad.addColorStop(1, '#1a1410');
             ctx.fillStyle = wallGrad;
             ctx.fillRect(0, 0, w, h);
 
-            // 绘制窗户
             const winX = w * 0.7;
             const winY = h * 0.15;
             const winW = 150;
             const winH = 250;
-            
-            // 窗户外的月光感
             ctx.fillStyle = '#1e293b';
             ctx.fillRect(winX, winY, winW, winH);
-            
-            // 窗框
             ctx.strokeStyle = '#050505';
             ctx.lineWidth = 8;
             ctx.strokeRect(winX, winY, winW, winH);
@@ -254,7 +275,6 @@
             ctx.moveTo(winX, winY + winH/3); ctx.lineTo(winX + winW, winY + winH/3);
             ctx.stroke();
 
-            // 窗台下的阴影
             const shadowGrad = ctx.createLinearGradient(winX, winY+winH, winX-100, winY+winH+200);
             shadowGrad.addColorStop(0, 'rgba(30, 41, 59, 0.2)');
             shadowGrad.addColorStop(1, 'transparent');
@@ -266,18 +286,19 @@
             ctx.lineTo(winX + winW, winY+winH);
             ctx.fill();
 
-            // 书桌/台面
             ctx.fillStyle = '#050505';
             ctx.fillRect(0, h * 0.75, w, h * 0.25);
             ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, h * 0.75, w, 10); // 桌沿亮部
+            ctx.fillRect(0, h * 0.75, w, 10);
         }
 
         function drawDust() {
             ctx.fillStyle = '#fff';
             dustParticles.forEach(p => {
-                p.x += p.speedX;
-                p.y += p.speedY;
+                if (gameState === 'PLAYING') {
+                    p.x += p.speedX;
+                    p.y += p.speedY;
+                }
                 if(p.x < 0) p.x = canvas.width;
                 if(p.x > canvas.width) p.x = 0;
                 if(p.y < 0) p.y = canvas.height;
@@ -295,8 +316,12 @@
             drawRoom();
             drawDust();
 
-            if (gameState !== 'PLAYING') {
-                if(gameState === 'START') requestAnimationFrame(gameLoop);
+            if (gameState === 'PAUSED' || gameState === 'START') {
+                // 即使暂停也渲染当前状态
+                notes.forEach(n => n.draw());
+                particles.forEach(p => p.draw());
+                drawAnimatedLighter();
+                requestAnimationFrame(gameLoop);
                 return;
             }
 
@@ -334,9 +359,8 @@
 
             if (lighterState.flameTime > 0) {
                 lighterState.angle = Math.min(lighterState.angle + 0.4, Math.PI * 0.75);
-                lighterState.flameTime--;
+                if (gameState === 'PLAYING') lighterState.flameTime--;
                 
-                // 火焰光晕影响环境
                 const ambientGlow = ctx.createRadialGradient(0, -80, 0, 0, -80, 300);
                 ambientGlow.addColorStop(0, 'rgba(255, 100, 0, 0.15)');
                 ambientGlow.addColorStop(1, 'transparent');
@@ -347,7 +371,6 @@
                 ctx.fill();
                 ctx.globalCompositeOperation = 'source-over';
 
-                // 核心火焰
                 const fH = 60 + Math.random() * 30;
                 const fW = 12 + Math.random() * 8;
                 const grad = ctx.createRadialGradient(0, -80, 0, 0, -80, fH);
@@ -364,16 +387,12 @@
                 lighterState.angle = Math.max(lighterState.angle - 0.15, 0);
             }
 
-            // 打火机身
             ctx.fillStyle = '#1a1a1a';
             ctx.fillRect(-22, -50, 44, 90);
-            
-            // 金属质感边线
             ctx.strokeStyle = '#333';
             ctx.lineWidth = 1;
             ctx.strokeRect(-22, -50, 44, 90);
 
-            // 盖子
             ctx.save();
             ctx.translate(-22, -50);
             ctx.rotate(-lighterState.angle);
@@ -382,10 +401,8 @@
             ctx.strokeRect(0, -22, 44, 22);
             ctx.restore();
 
-            // 喷火口
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(-8, -62, 16, 12);
-
             ctx.restore();
         }
 
@@ -418,7 +435,7 @@
         function triggerBurn(note) {
             for (let i = 0; i < CONFIG.particleCount; i++) {
                 particles.push(new Particle(note.x, note.y, '#f97316'));
-                particles.push(new Particle(note.x, note.y, '#222')); // 黑色纸灰
+                particles.push(new Particle(note.x, note.y, '#222'));
             }
             playBurnSound();
         }
@@ -440,9 +457,23 @@
             comboDisplay.style.opacity = 0;
         }
 
-        // 音效
+        function togglePause() {
+            if (gameState === 'PLAYING') {
+                gameState = 'PAUSED';
+                pauseStartTime = performance.now();
+                bgMusic.pause();
+                pauseScreen.classList.remove('hidden');
+            } else if (gameState === 'PAUSED') {
+                const pauseDuration = performance.now() - pauseStartTime;
+                lastNoteTime += pauseDuration; // 修正时间轴，防止恢复时瞬间生成一堆照片
+                gameState = 'PLAYING';
+                bgMusic.play();
+                pauseScreen.classList.add('hidden');
+            }
+        }
+
         function playBeatSound() {
-            if (!audioCtx) return;
+            if (!audioCtx || gameState !== 'PLAYING') return;
             const osc = audioCtx.createOscillator();
             const g = audioCtx.createGain();
             osc.connect(g); g.connect(audioCtx.destination);
@@ -483,11 +514,16 @@
                 e.preventDefault();
                 handleInput();
             }
+            if (e.code === 'Escape') {
+                togglePause();
+            }
         });
 
         window.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            handleInput();
+            if (gameState === 'PLAYING') {
+                e.preventDefault();
+                handleInput();
+            }
         }, {passive: false});
 
         startBtn.addEventListener('click', () => {
@@ -496,6 +532,16 @@
             startScreen.classList.add('hidden');
             scoreBoard.classList.remove('hidden');
             lastNoteTime = performance.now();
+            bgMusic.play().catch(err => console.log("Music play blocked:", err));
+        });
+
+        pauseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePause();
+        });
+
+        resumeBtn.addEventListener('click', () => {
+            togglePause();
         });
 
         requestAnimationFrame(gameLoop);
