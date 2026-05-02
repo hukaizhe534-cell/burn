@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>余烬：回忆焚化炉 - 深夜房间版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            color: #eee;
+            overflow: hidden;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .start-screen {
+            pointer-events: auto;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 3rem;
+            border-radius: 1rem;
+            text-align: center;
+            border: 1px solid #442211;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+        }
+        .score-board {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            font-size: 20px;
+            font-weight: 200;
+            color: #d69e2e;
+            letter-spacing: 2px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .combo-text {
+            position: absolute;
+            top: 30%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 72px;
+            font-weight: 900;
+            color: #f6993f;
+            opacity: 0;
+            transition: all 0.1s;
+            text-shadow: 0 0 20px rgba(246, 153, 63, 0.4);
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="ui-overlay">
+        <div id="startScreen" class="start-screen">
+            <h1 class="text-5xl font-black mb-2 text-orange-800 tracking-tighter">余烬</h1>
+            <p class="mb-8 text-gray-500 text-xs tracking-[0.5em]">ROOM OF LOST MEMORIES</p>
+            <div class="mb-10 text-sm text-gray-400 leading-relaxed">
+                <p>在这个静谧的房间里，</p>
+                <p>焚毁那些不该留下的过去。</p>
+            </div>
+            <button id="startBtn" class="bg-stone-900 hover:bg-orange-950 text-orange-700 border border-orange-900 px-12 py-3 rounded-sm font-bold transition-all transform hover:scale-105 pointer-events-auto">
+                进入房间
+            </button>
+        </div>
+
+        <div id="scoreBoard" class="score-board hidden">
+            归于尘土: <span id="scoreVal">0</span>
+        </div>
+        
+        <div id="comboDisplay" class="combo-text">
+            <span id="comboVal">0</span>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            hitX: 300,        
+            hitWindow: 90,    
+            noteSpeed: 4.5,     
+            bpm: 80,          
+            particleCount: 40
+        };
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startScreen = document.getElementById('startScreen');
+        const startBtn = document.getElementById('startBtn');
+        const scoreBoard = document.getElementById('scoreBoard');
+        const scoreVal = document.getElementById('scoreVal');
+        const comboDisplay = document.getElementById('comboDisplay');
+        const comboVal = document.getElementById('comboVal');
+
+        let gameState = 'START';
+        let score = 0;
+        let combo = 0;
+        let notes = [];
+        let particles = [];
+        let dustParticles = []; // 环境微尘
+        let lastNoteTime = 0;
+        let audioCtx;
+        
+        let lighterState = {
+            isOpen: false,
+            flameTime: 0,
+            angle: 0
+        };
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            initDust();
+        }
+
+        // 初始化环境微尘
+        function initDust() {
+            dustParticles = [];
+            for(let i=0; i<50; i++) {
+                dustParticles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2,
+                    speedX: (Math.random() - 0.5) * 0.5,
+                    speedY: (Math.random() - 0.5) * 0.5,
+                    opacity: Math.random() * 0.5
+                });
+            }
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.6) * 6; 
+                this.vy = (Math.random() - 0.8) * 8 - 2;
+                this.life = 1.0;
+                this.color = color;
+                this.size = Math.random() * 4 + 1;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.015;
+            }
+            draw() {
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        class Note {
+            constructor() {
+                this.x = canvas.width + 200;
+                this.y = canvas.height * 0.65; 
+                this.w = 140;
+                this.h = 180;
+                this.active = true;
+                this.rotation = (Math.random() - 0.5) * 0.15;
+                this.hue = Math.random() * 40 + 20; // 偏黄旧相片感
+                this.seed = Math.random();
+            }
+
+            update() {
+                this.x -= CONFIG.noteSpeed;
+                if (this.x < -200) {
+                    this.active = false;
+                    if (gameState === 'PLAYING') resetCombo();
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // 相片阴影
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                
+                // 相片纸
+                ctx.fillStyle = '#e2e2d2';
+                ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+                
+                // 画面
+                const p = 8;
+                ctx.fillStyle = '#222';
+                ctx.fillRect(-this.w/2 + p, -this.h/2 + p, this.w - p*2, this.h - p*4);
+
+                // 简单的内容勾勒
+                ctx.clip();
+                ctx.globalAlpha = 0.4;
+                ctx.fillStyle = `hsl(${this.hue}, 30%, 50%)`;
+                if(this.seed > 0.5) {
+                    ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI*2); ctx.fill();
+                } else {
+                    ctx.fillRect(-50, -20, 100, 60);
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // 绘制房间背景
+        function drawRoom() {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // 墙面渐变
+            const wallGrad = ctx.createLinearGradient(0, 0, 0, h);
+            wallGrad.addColorStop(0, '#0a0a0c');
+            wallGrad.addColorStop(1, '#1a1410');
+            ctx.fillStyle = wallGrad;
+            ctx.fillRect(0, 0, w, h);
+
+            // 绘制窗户
+            const winX = w * 0.7;
+            const winY = h * 0.15;
+            const winW = 150;
+            const winH = 250;
+            
+            // 窗户外的月光感
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(winX, winY, winW, winH);
+            
+            // 窗框
+            ctx.strokeStyle = '#050505';
+            ctx.lineWidth = 8;
+            ctx.strokeRect(winX, winY, winW, winH);
+            ctx.beginPath();
+            ctx.moveTo(winX + winW/2, winY); ctx.lineTo(winX + winW/2, winY + winH);
+            ctx.moveTo(winX, winY + winH/3); ctx.lineTo(winX + winW, winY + winH/3);
+            ctx.stroke();
+
+            // 窗台下的阴影
+            const shadowGrad = ctx.createLinearGradient(winX, winY+winH, winX-100, winY+winH+200);
+            shadowGrad.addColorStop(0, 'rgba(30, 41, 59, 0.2)');
+            shadowGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = shadowGrad;
+            ctx.beginPath();
+            ctx.moveTo(winX, winY+winH);
+            ctx.lineTo(winX-150, h);
+            ctx.lineTo(winX + winW - 150, h);
+            ctx.lineTo(winX + winW, winY+winH);
+            ctx.fill();
+
+            // 书桌/台面
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, h * 0.75, w, h * 0.25);
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, h * 0.75, w, 10); // 桌沿亮部
+        }
+
+        function drawDust() {
+            ctx.fillStyle = '#fff';
+            dustParticles.forEach(p => {
+                p.x += p.speedX;
+                p.y += p.speedY;
+                if(p.x < 0) p.x = canvas.width;
+                if(p.x > canvas.width) p.x = 0;
+                if(p.y < 0) p.y = canvas.height;
+                if(p.y > canvas.height) p.y = 0;
+                
+                ctx.globalAlpha = p.opacity;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+        }
+
+        function gameLoop(time) {
+            drawRoom();
+            drawDust();
+
+            if (gameState !== 'PLAYING') {
+                if(gameState === 'START') requestAnimationFrame(gameLoop);
+                return;
+            }
+
+            // 生成照片
+            const interval = 60000 / CONFIG.bpm;
+            if (time - lastNoteTime > interval) {
+                notes.push(new Note());
+                lastNoteTime = time;
+                playBeatSound();
+            }
+
+            // 更新物体
+            for (let i = notes.length - 1; i >= 0; i--) {
+                notes[i].update();
+                notes[i].draw();
+                if (!notes[i].active) notes.splice(i, 1);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if (particles[i].life <= 0) particles.splice(i, 1);
+            }
+
+            drawAnimatedLighter();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawAnimatedLighter() {
+            const lx = CONFIG.hitX;
+            const ly = canvas.height * 0.75 + 20; 
+            
+            ctx.save();
+            ctx.translate(lx, ly);
+
+            if (lighterState.flameTime > 0) {
+                lighterState.angle = Math.min(lighterState.angle + 0.4, Math.PI * 0.75);
+                lighterState.flameTime--;
+                
+                // 火焰光晕影响环境
+                const ambientGlow = ctx.createRadialGradient(0, -80, 0, 0, -80, 300);
+                ambientGlow.addColorStop(0, 'rgba(255, 100, 0, 0.15)');
+                ambientGlow.addColorStop(1, 'transparent');
+                ctx.globalCompositeOperation = 'screen';
+                ctx.fillStyle = ambientGlow;
+                ctx.beginPath();
+                ctx.arc(0, -80, 300, 0, Math.PI*2);
+                ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+
+                // 核心火焰
+                const fH = 60 + Math.random() * 30;
+                const fW = 12 + Math.random() * 8;
+                const grad = ctx.createRadialGradient(0, -80, 0, 0, -80, fH);
+                grad.addColorStop(0, '#fff');
+                grad.addColorStop(0.3, '#ffcc00');
+                grad.addColorStop(0.6, '#ff4400');
+                grad.addColorStop(1, 'transparent');
+                
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.ellipse(0, -90, fW, fH, 0, 0, Math.PI*2);
+                ctx.fill();
+            } else {
+                lighterState.angle = Math.max(lighterState.angle - 0.15, 0);
+            }
+
+            // 打火机身
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(-22, -50, 44, 90);
+            
+            // 金属质感边线
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(-22, -50, 44, 90);
+
+            // 盖子
+            ctx.save();
+            ctx.translate(-22, -50);
+            ctx.rotate(-lighterState.angle);
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, -22, 44, 22);
+            ctx.strokeRect(0, -22, 44, 22);
+            ctx.restore();
+
+            // 喷火口
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(-8, -62, 16, 12);
+
+            ctx.restore();
+        }
+
+        function handleInput() {
+            if (gameState !== 'PLAYING') return;
+
+            lighterState.isOpen = true;
+            lighterState.flameTime = 12;
+
+            let targetNote = null;
+            let minDistance = Infinity;
+
+            for (let note of notes) {
+                const dist = Math.abs(note.x - CONFIG.hitX);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    targetNote = note;
+                }
+            }
+
+            if (targetNote && minDistance < CONFIG.hitWindow) {
+                triggerBurn(targetNote);
+                targetNote.active = false;
+                addScore();
+            } else {
+                playClickSound();
+            }
+        }
+
+        function triggerBurn(note) {
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                particles.push(new Particle(note.x, note.y, '#f97316'));
+                particles.push(new Particle(note.x, note.y, '#222')); // 黑色纸灰
+            }
+            playBurnSound();
+        }
+
+        function addScore() {
+            combo++;
+            score += 1;
+            scoreVal.innerText = score;
+            comboVal.innerText = combo;
+            comboDisplay.style.opacity = 1;
+            comboDisplay.style.transform = 'translate(-50%, -50%) scale(1.2)';
+            setTimeout(() => {
+                comboDisplay.style.transform = 'translate(-50%, -50%) scale(1)';
+            }, 50);
+        }
+
+        function resetCombo() {
+            combo = 0;
+            comboDisplay.style.opacity = 0;
+        }
+
+        // 音效
+        function playBeatSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.connect(g); g.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(50, audioCtx.currentTime);
+            g.gain.setValueAtTime(0.01, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function playBurnSound() {
+            if (!audioCtx) return;
+            const bufferSize = audioCtx.sampleRate * 0.3;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const n = audioCtx.createBufferSource();
+            n.buffer = buffer;
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+            n.connect(g); g.connect(audioCtx.destination);
+            n.start();
+        }
+
+        function playClickSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+            osc.connect(g); g.connect(audioCtx.destination);
+            g.gain.setValueAtTime(0.03, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.05);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                handleInput();
+            }
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handleInput();
+        }, {passive: false});
+
+        startBtn.addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            gameState = 'PLAYING';
+            startScreen.classList.add('hidden');
+            scoreBoard.classList.remove('hidden');
+            lastNoteTime = performance.now();
+        });
+
+        requestAnimationFrame(gameLoop);
+
+    </script>
+</body>
+</html>
